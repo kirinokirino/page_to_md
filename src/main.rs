@@ -58,20 +58,16 @@ fn walk(indent: usize, handle: &Handle) {
     // FIXME: don't allocate
     print!("{}", repeat(" ").take(indent).collect::<String>());
     match node.data {
-        NodeData::Document => println!("#Document"),
-
-        NodeData::Doctype {
-            ref name,
-            ref public_id,
-            ref system_id,
-        } => println!("<!DOCTYPE {} \"{}\" \"{}\">", name, public_id, system_id),
+        NodeData::Document => (),
+        NodeData::Doctype { .. } => (),
+        NodeData::Comment { .. } => (),
 
         NodeData::Text { ref contents } => {
-            println!("#text: {}", contents.borrow().escape_default())
+            let text = collapse_whitespace(contents.borrow().to_string());
+            if let Some(text) = text {
+                println!("\"{text}\"")
+            }
         }
-
-        NodeData::Comment { ref contents } => println!("<!-- {} -->", contents.escape_default()),
-
         NodeData::Element {
             ref name,
             ref attrs,
@@ -91,5 +87,29 @@ fn walk(indent: usize, handle: &Handle) {
 
     for child in node.children.borrow().iter() {
         walk(indent + 1, child);
+    }
+}
+
+fn collapse_whitespace(string: String) -> Option<String> {
+    let mut last_was_whitespace = false;
+    let result = string
+        .chars()
+        .filter_map(|ch| {
+            if ch.is_whitespace() && last_was_whitespace {
+                last_was_whitespace = true;
+                None
+            } else if ch.is_whitespace() {
+                last_was_whitespace = true;
+                Some(' ')
+            } else {
+                last_was_whitespace = false;
+                Some(ch)
+            }
+        })
+        .collect();
+    if &result == " " {
+        None
+    } else {
+        Some(result)
     }
 }
