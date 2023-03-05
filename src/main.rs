@@ -1,8 +1,8 @@
-use std::default::Default;
 use std::fs::File;
 use std::io::BufReader;
 use std::iter::repeat;
 use std::string::String;
+use std::{default::Default, io::Read};
 
 #[macro_use]
 extern crate html5ever;
@@ -16,7 +16,7 @@ use markup5ever_rcdom::{Handle, NodeData, RcDom};
 
 const PAGE: &str = include_str!("../wikipage.html");
 fn main() {
-    let page = File::open("./wikipage.html").unwrap(); //get_wiki_page().unwrap();
+    let page = get_wiki_page().unwrap();
     let mut page = BufReader::new(page);
     let options = ParseOpts {
         tree_builder: TreeBuilderOpts {
@@ -47,11 +47,10 @@ fn main() {
     }
 }
 
-fn get_wiki_page() -> Result<String, ureq::Error> {
+fn get_wiki_page() -> Result<Box<dyn Read + Send + Sync>, ureq::Error> {
     let wiki = "https://ja.wikipedia.org/wiki/%E7%89%B9%E5%88%A5:%E3%81%8A%E3%81%BE%E3%81%8B%E3%81%9B%E8%A1%A8%E7%A4%BA";
     let url = wiki; //"https://github.com/algesten/ureq/raw/main/README.md";
-    let html: String = ureq::get(wiki).call()?.into_string()?;
-
+    let html = ureq::get(wiki).call()?.into_reader();
     Ok(html)
 }
 
@@ -73,43 +72,58 @@ fn walk(indent: usize, before: &mut String, after: &mut Vec<(usize, String)>, ha
             ref name,
             ref attrs,
             ..
-        } => {
-            match name.local {
-                local_name!("style") | local_name!("script") => return,
-                local_name!("p") => {
-                    before.push_str("\n\n");
-                    after_walk.push_str("\n\n")
-                }
-                local_name!("br") => before.push('\n'),
-                local_name!("h1") => before.push_str("\n\n# "),
-                local_name!("h2") => before.push_str("\n\n## "),
-                local_name!("h3") => before.push_str("\n\n### "),
-                local_name!("h4") => before.push_str("\n\n#### "),
-                local_name!("h5") => before.push_str("\n\n##### "),
-                local_name!("h6") => before.push_str("\n\n###### "),
-                local_name!("blockquote") => before.push_str("\n\n> "),
-                local_name!("li") => before.push_str("\n - "),
-                local_name!("hr") => before.push_str("\n\n"),
-                local_name!("em") | local_name!("i") => {
-                    before.push('_');
-                    after_walk.push('_')
-                }
-                local_name!("b") | local_name!("strong") => {
-                    before.push_str("**");
-                    after_walk.push_str("**")
-                }
-                local_name!("img") => (), //before.push_str(&format!("![{}]({})")),
-                local_name!("a") => (),   //before.push_str(&format!("[{}]({})")),
-                _ => (),
+        } => match name.local {
+            local_name!("style") | local_name!("script") => return,
+            local_name!("p") => {
+                before.push_str("\n\n");
+                after_walk.push_str("\n\n")
             }
-            // assert!(name.ns == ns!(html));
-            // print!("<{}", name.local);
-            // for attr in attrs.borrow().iter() {
-            //     assert!(attr.name.ns == ns!());
-            //     print!(" {}=\"{}\"", attr.name.local, attr.value);
-            // }
-            // println!(">");
-        }
+            local_name!("br") => before.push('\n'),
+            local_name!("h1") => before.push_str("\n\n# "),
+            local_name!("h2") => before.push_str("\n\n## "),
+            local_name!("h3") => before.push_str("\n\n### "),
+            local_name!("h4") => before.push_str("\n\n#### "),
+            local_name!("h5") => before.push_str("\n\n##### "),
+            local_name!("h6") => before.push_str("\n\n###### "),
+            local_name!("blockquote") => before.push_str("\n\n> "),
+            local_name!("li") => before.push_str("\n - "),
+            local_name!("hr") => before.push_str("\n\n"),
+            local_name!("em") | local_name!("i") => {
+                before.push('_');
+                after_walk.push('_')
+            }
+            local_name!("b") | local_name!("strong") => {
+                before.push_str("**");
+                after_walk.push_str("**")
+            }
+            local_name!("img") => {
+                let attrs = attrs.borrow();
+                let alt = attrs
+                    .iter()
+                    .find(|attr| attr.name.local == local_name!("alt"));
+                let src = attrs
+                    .iter()
+                    .find(|attr| attr.name.local == local_name!("src"));
+                if alt.is_some() && src.is_some() {
+                    before.push_str(&format!(
+                        "![{}]({})",
+                        alt.unwrap().value,
+                        src.unwrap().value
+                    ));
+                }
+            }
+            local_name!("a") => {
+                if let Some(href) = attrs
+                    .borrow()
+                    .iter()
+                    .find(|attr| attr.name.local == local_name!("href"))
+                {
+                    before.push('[');
+                    after_walk.push_str(&format!("]({})", href.value));
+                }
+            }
+            _ => (),
+        },
 
         NodeData::ProcessingInstruction { .. } => unreachable!(),
     }
