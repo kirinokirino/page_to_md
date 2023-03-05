@@ -35,8 +35,10 @@ fn main() {
         .read_from(&mut page)
         .unwrap();
 
-    walk(0, &dom.document);
-
+    let mut before = String::new();
+    let mut after: Vec<(usize, String)> = Vec::new();
+    walk(0, &mut before, &mut after, &dom.document);
+    println!("{before}");
     if !dom.errors.is_empty() {
         println!("\nParse errors:");
         for err in dom.errors.iter() {
@@ -53,10 +55,9 @@ fn get_wiki_page() -> Result<String, ureq::Error> {
     Ok(html)
 }
 
-fn walk(indent: usize, handle: &Handle) {
+fn walk(indent: usize, before: &mut String, after: &mut Vec<(usize, String)>, handle: &Handle) {
+    let mut after_walk = String::new();
     let node = handle;
-    // FIXME: don't allocate
-    print!("{}", repeat(" ").take(indent).collect::<String>());
     match node.data {
         NodeData::Document => (),
         NodeData::Doctype { .. } => (),
@@ -65,7 +66,7 @@ fn walk(indent: usize, handle: &Handle) {
         NodeData::Text { ref contents } => {
             let text = collapse_whitespace(contents.borrow().to_string());
             if let Some(text) = text {
-                println!("\"{text}\"")
+                before.push_str(&text);
             }
         }
         NodeData::Element {
@@ -73,20 +74,52 @@ fn walk(indent: usize, handle: &Handle) {
             ref attrs,
             ..
         } => {
-            assert!(name.ns == ns!(html));
-            print!("<{}", name.local);
-            for attr in attrs.borrow().iter() {
-                assert!(attr.name.ns == ns!());
-                print!(" {}=\"{}\"", attr.name.local, attr.value);
+            match name.local {
+                local_name!("style") | local_name!("script") => return,
+                local_name!("p") => {
+                    before.push_str("\n\n");
+                    after_walk.push_str("\n\n")
+                }
+                local_name!("br") => before.push('\n'),
+                local_name!("h1") => before.push_str("\n\n# "),
+                local_name!("h2") => before.push_str("\n\n## "),
+                local_name!("h3") => before.push_str("\n\n### "),
+                local_name!("h4") => before.push_str("\n\n#### "),
+                local_name!("h5") => before.push_str("\n\n##### "),
+                local_name!("h6") => before.push_str("\n\n###### "),
+                local_name!("blockquote") => before.push_str("\n\n> "),
+                local_name!("li") => before.push_str("\n - "),
+                local_name!("hr") => before.push_str("\n\n"),
+                local_name!("em") | local_name!("i") => {
+                    before.push('_');
+                    after_walk.push('_')
+                }
+                local_name!("b") | local_name!("strong") => {
+                    before.push_str("**");
+                    after_walk.push_str("**")
+                }
+                local_name!("img") => (), //before.push_str(&format!("![{}]({})")),
+                local_name!("a") => (),   //before.push_str(&format!("[{}]({})")),
+                _ => (),
             }
-            println!(">");
+            // assert!(name.ns == ns!(html));
+            // print!("<{}", name.local);
+            // for attr in attrs.borrow().iter() {
+            //     assert!(attr.name.ns == ns!());
+            //     print!(" {}=\"{}\"", attr.name.local, attr.value);
+            // }
+            // println!(">");
         }
 
         NodeData::ProcessingInstruction { .. } => unreachable!(),
     }
-
+    after.push((indent, after_walk));
     for child in node.children.borrow().iter() {
-        walk(indent + 1, child);
+        walk(indent + 1, before, after, child);
+        while after.last().is_some() && after.last().unwrap().0 > indent {
+            let (_, text) = after.pop().unwrap();
+            before.push_str(&text);
+        }
     }
 }
 
